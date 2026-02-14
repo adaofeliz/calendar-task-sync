@@ -6,6 +6,51 @@ import {
   TaskUpdate,
 } from './types';
 
+// Map numeric priority to string
+function normalizePriority(priority: number): 'low' | 'medium' | 'high' {
+  switch (priority) {
+    case 0: return 'low';
+    case 1: return 'medium';
+    case 2: return 'high';
+    default: return 'medium';
+  }
+}
+
+// Map numeric status to string
+function normalizeStatus(status: number): 'not_started' | 'in_progress' | 'done' | 'archived' | 'waiting' | 'cancelled' | 'planned' {
+  switch (status) {
+    case 0: return 'not_started';
+    case 1: return 'in_progress';
+    case 2: return 'done';
+    case 3: return 'archived';
+    case 4: return 'waiting';
+    case 5: return 'cancelled';
+    case 6: return 'planned';
+    default: return 'not_started';
+  }
+}
+
+// Normalize task fields
+function normalizeTask(task: any): TududiApiTask {
+  const normalized: TududiApiTask = {
+    ...task,
+    priority: typeof task.priority === 'number' ? normalizePriority(task.priority) : task.priority,
+    status: typeof task.status === 'number' ? normalizeStatus(task.status) : task.status,
+    // Handle both 'tags' and 'Tags' fields
+    tags: task.tags || task.Tags || [],
+  };
+  
+  console.log('[TududiClient] Normalized task:', {
+    uid: normalized.uid,
+    name: normalized.name,
+    priority: normalized.priority,
+    status: normalized.status,
+    tags: normalized.tags,
+  });
+  
+  return normalized;
+}
+
 export class TududiClient {
   private baseUrl: string;
   private apiKey: string;
@@ -69,31 +114,75 @@ export class TududiClient {
     if (filters?.project_id) params.append('project_id', filters.project_id);
 
     const queryString = params.toString();
-    const url = `${this.baseUrl}/api/v1/tasks${queryString ? `?${queryString}` : ''}`;
+    const url = `${this.baseUrl}/tasks${queryString ? `?${queryString}` : ''}`;
+    
+    console.log('[TududiClient] getTasks URL:', url);
 
-    return this.fetchWithRetry<TududiApiTask[]>(url);
+    const response = await this.fetchWithRetry<any>(url);
+    
+    console.log('[TududiClient] getTasks response type:', typeof response, 'keys:', Object.keys(response || {}));
+    
+    // API returns { tasks: [...] } not bare array
+    const tasksArray = response.tasks || response;
+    
+    console.log('[TududiClient] getTasks count:', Array.isArray(tasksArray) ? tasksArray.length : 'not an array');
+    
+    if (!Array.isArray(tasksArray)) {
+      console.error('[TududiClient] getTasks expected array, got:', tasksArray);
+      return [];
+    }
+    
+    return tasksArray.map(normalizeTask);
   }
 
   async getTask(uid: string): Promise<TududiApiTask> {
-    const url = `${this.baseUrl}/api/v1/task/${uid}`;
-    return this.fetchWithRetry<TududiApiTask>(url);
+    const url = `${this.baseUrl}/task/${uid}`;
+    
+    console.log('[TududiClient] getTask URL:', url);
+    
+    const response = await this.fetchWithRetry<any>(url);
+    
+    console.log('[TududiClient] getTask response:', response);
+    
+    return normalizeTask(response);
   }
 
   async updateTask(uid: string, updates: TaskUpdate): Promise<TududiApiTask> {
-    const url = `${this.baseUrl}/api/v1/task/${uid}`;
-    return this.fetchWithRetry<TududiApiTask>(url, {
+    const url = `${this.baseUrl}/task/${uid}`;
+    
+    console.log('[TududiClient] updateTask URL:', url, 'updates:', updates);
+    
+    const response = await this.fetchWithRetry<any>(url, {
       method: 'PATCH',
       body: JSON.stringify(updates),
     });
+    
+    console.log('[TududiClient] updateTask response:', response);
+    
+    return normalizeTask(response);
   }
 
   async getProjects(): Promise<TududiApiProject[]> {
-    const url = `${this.baseUrl}/api/v1/projects`;
-    return this.fetchWithRetry<TududiApiProject[]>(url);
+    const url = `${this.baseUrl}/projects`;
+    
+    console.log('[TududiClient] getProjects URL:', url);
+    
+    const response = await this.fetchWithRetry<TududiApiProject[]>(url);
+    
+    console.log('[TududiClient] getProjects count:', response.length);
+    
+    return response;
   }
 
   async getTags(): Promise<TududiApiTag[]> {
-    const url = `${this.baseUrl}/api/v1/tags`;
-    return this.fetchWithRetry<TududiApiTag[]>(url);
+    const url = `${this.baseUrl}/tags`;
+    
+    console.log('[TududiClient] getTags URL:', url);
+    
+    const response = await this.fetchWithRetry<TududiApiTag[]>(url);
+    
+    console.log('[TududiClient] getTags count:', response.length);
+    
+    return response;
   }
 }

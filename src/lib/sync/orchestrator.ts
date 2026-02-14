@@ -28,6 +28,8 @@ export interface SyncResult {
 }
 
 export async function runSyncCycle(): Promise<SyncResult> {
+  console.log('[Sync] Starting sync cycle');
+  
   const result: SyncResult = {
     success: false,
     tasksScheduled: 0,
@@ -36,24 +38,27 @@ export async function runSyncCycle(): Promise<SyncResult> {
     errors: [],
   };
 
-  // Acquire mutex
+  console.log('[Sync] Acquiring sync lock');
   const locked = await acquireSyncLock();
   if (!locked) {
+    console.log('[Sync] Sync already in progress, exiting');
     result.errors.push('Sync already in progress');
     return result;
   }
 
   try {
-    // Load config
+    console.log('[Sync] Loading configuration');
     const config = await getAllConfig();
     const tududiUrl = process.env.TUDUDI_API_URL ?? '';
     const tududiKey = process.env.TUDUDI_API_KEY ?? '';
+    
+    console.log('[Sync] Tududi URL:', tududiUrl);
     
     if (!tududiUrl || !tududiKey) {
       throw new Error('Tududi API credentials not configured');
     }
 
-    // Initialize clients
+    console.log('[Sync] Initializing clients');
     const tududi = new TududiClient(tududiUrl, tududiKey);
     const googleAuth = await getAuthenticatedClient();
     
@@ -61,23 +66,28 @@ export async function runSyncCycle(): Promise<SyncResult> {
       throw new Error('Google Calendar not authenticated');
     }
 
-    // Fetch data
+    console.log('[Sync] Fetching data from Tududi and Google Calendar');
     const [tududiTasks, calendarMappings, busyCalendarIds, defaultCalendarId] = await Promise.all([
       tududi.getTasks(),
       getCalendarMappings(),
       getBusyCalendarIds(),
       getDefaultCalendarId(),
     ]);
-
-    // Filter schedulable tasks
-    const schedulableTasks = getSchedulableTasks(tududiTasks);
     
-    // Check for completed tasks
+    console.log('[Sync] Fetched tasks:', tududiTasks.length, 'calendar mappings:', calendarMappings.length, 'busy calendars:', busyCalendarIds.length);
+
+    console.log('[Sync] Filtering schedulable tasks');
+    const schedulableTasks = getSchedulableTasks(tududiTasks);
+    console.log('[Sync] Schedulable tasks:', schedulableTasks.length);
+    
+    console.log('[Sync] Checking for completed tasks');
     const activeSyncedTasks = await getActiveSyncedTasks();
+    console.log('[Sync] Active synced tasks:', activeSyncedTasks.length);
     for (const syncedTask of activeSyncedTasks) {
       const tududiTask = tududiTasks.find(t => t.uid === syncedTask.taskUid);
       if (tududiTask && ['done', 'archived', 'cancelled'].includes(tududiTask.status)) {
-        // Task completed - clean up
+        console.log('[Sync] Task completed, cleaning up:', syncedTask.taskUid);
+        
         if (syncedTask.calendarEventId && syncedTask.calendarId) {
           await deleteEvent(syncedTask.calendarId, syncedTask.calendarEventId);
         }
@@ -85,7 +95,6 @@ export async function runSyncCycle(): Promise<SyncResult> {
           await deleteEvent(syncedTask.calendarId, syncedTask.breakEventId);
         }
         
-        // Strip emoji from Tududi
         if (syncedTask.cleanName) {
           await tududi.updateTask(syncedTask.taskUid, { name: syncedTask.cleanName });
         }
@@ -95,14 +104,16 @@ export async function runSyncCycle(): Promise<SyncResult> {
       }
     }
 
-    // Check for overdue tasks to reschedule
+    console.log('[Sync] Checking for overdue tasks to reschedule');
     const rescheduleTimeout = (config.reschedule_timeout_hours as number) ?? 12;
     const overdueTasks = await getOverdueTasks(rescheduleTimeout);
+    console.log('[Sync] Overdue tasks:', overdueTasks.length);
     
     for (const overdue of overdueTasks) {
       const tududiTask = tududiTasks.find(t => t.uid === overdue.taskUid);
       if (tududiTask && !['done', 'archived', 'cancelled'].includes(tududiTask.status)) {
-        // Delete old events
+        console.log('[Sync] Rescheduling overdue task:', overdue.taskUid);
+        
         if (overdue.calendarEventId && overdue.calendarId) {
           await deleteEvent(overdue.calendarId, overdue.calendarEventId);
         }
@@ -115,18 +126,18 @@ export async function runSyncCycle(): Promise<SyncResult> {
       }
     }
 
-    // Get already scheduled task UIDs
+    console.log('[Sync] Filtering out already scheduled tasks');
     const scheduledUids = new Set(activeSyncedTasks.map(t => t.taskUid));
-    
-    // Filter to unscheduled tasks only
     const unscheduledTasks = schedulableTasks.filter(t => !scheduledUids.has(t.uid));
+    console.log('[Sync] Unscheduled tasks:', unscheduledTasks.length);
     
     if (unscheduledTasks.length === 0) {
+      console.log('[Sync] No unscheduled tasks, exiting');
       result.success = true;
       return result;
     }
 
-    // Get reschedule counts for ranking
+    console.log('[Sync] Getting reschedule counts for ranking');
     const rescheduleCounts: Record<string, number> = {};
     for (const synced of activeSyncedTasks) {
       if (synced.status === 'rescheduled') {
@@ -134,11 +145,12 @@ export async function runSyncCycle(): Promise<SyncResult> {
       }
     }
 
-    // Rank tasks
+    console.log('[Sync] Ranking tasks');
     const weights = config.weights as { priority: number; type: number; project: number; urgency: number; energy: number };
     const rankedTasks = rankTasks(unscheduledTasks, weights, rescheduleCounts);
+    console.log('[Sync] Ranked tasks:', rankedTasks.length);
 
-    // Add estimated durations
+    console.log('[Sync] Adding estimated durations');
     const durationMatrix = config.duration_matrix as { focus: Record<string, number>; noise: Record<string, number> };
     for (const rt of rankedTasks) {
       const taskType = extractTaskType(rt.task.tags);
@@ -146,25 +158,36 @@ export async function runSyncCycle(): Promise<SyncResult> {
       rt.estimatedDuration = durationMatrix[typeKey]?.[rt.task.priority] ?? 60;
     }
 
-    // Fetch busy periods
+    console.log('[Sync] Fetching busy periods');
     const now = new Date();
-    const endDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 1 week ahead
+    const endDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     
     const busyPeriods = await getFreeBusy(
       busyCalendarIds.length > 0 ? busyCalendarIds : ['primary'],
       now,
       endDate
     );
+    console.log('[Sync] Busy periods:', busyPeriods.length);
 
-    // Find free slots
+    console.log('[Sync] Finding free slots');
     const schedulingWindows = config.scheduling_windows as { monday: DayWindow; tuesday: DayWindow; wednesday: DayWindow; thursday: DayWindow; friday: DayWindow; saturday: DayWindow; sunday: DayWindow };
     const minDuration = 30;
     const freeSlots = findFreeSlots(now, endDate, busyPeriods, schedulingWindows, minDuration);
+    console.log('[Sync] Free slots:', freeSlots.length);
 
-    // Schedule tasks
-    const breakRules = config.break_rules as { shortDuration: number; longDuration: number; thresholdMinutes: number };
-    const peakHours = config.peak_hours as { start: number; end: number };
+    console.log('[Sync] Mapping break_rules config from DB snake_case to camelCase');
+    const breakConfig = config.break_rules as Record<string, unknown>;
+    const breakRules = {
+      shortDuration: (breakConfig?.short_duration ?? breakConfig?.shortDuration ?? 15) as number,
+      longDuration: (breakConfig?.long_duration ?? breakConfig?.longDuration ?? 30) as number,
+      thresholdMinutes: (breakConfig?.threshold_minutes ?? breakConfig?.thresholdMinutes ?? 60) as number,
+    };
+    console.log('[Sync] Break rules:', breakRules);
     
+    const peakHours = config.peak_hours as { start: number; end: number };
+    console.log('[Sync] Peak hours:', peakHours);
+    
+    console.log('[Sync] Scheduling tasks into free slots');
     const placements = scheduleTasks(
       rankedTasks,
       freeSlots,
@@ -173,11 +196,13 @@ export async function runSyncCycle(): Promise<SyncResult> {
       breakRules,
       peakHours
     );
+    console.log('[Sync] Task placements:', placements.length);
 
-    // Create calendar events and update Tududi
+    console.log('[Sync] Creating calendar events and updating Tududi');
     for (const placement of placements) {
       try {
-        // Create task event
+        console.log('[Sync] Creating event for task:', placement.task.uid);
+        
         const taskEvent = await createEvent(placement.calendarId, {
           summary: applyEmoji(placement.task.name, '📅'),
           description: placement.task.note || '',
@@ -185,16 +210,14 @@ export async function runSyncCycle(): Promise<SyncResult> {
           end: { dateTime: placement.eventEnd.toISOString() },
         });
 
-        // Create break event
         const breakEvent = await createEvent(placement.calendarId, {
           summary: 'Break',
           start: { dateTime: placement.breakStart.toISOString() },
           end: { dateTime: placement.breakEnd.toISOString() },
-          colorId: '8', // Gray color
+          colorId: '8',
           transparency: 'transparent',
         });
 
-        // Record in database
         await recordTaskScheduled(
           placement.task,
           taskEvent.id!,
@@ -205,23 +228,27 @@ export async function runSyncCycle(): Promise<SyncResult> {
           stripEmoji(placement.task.name)
         );
 
-        // Update Tududi with emoji
         await tududi.updateTask(placement.task.uid, {
           name: applyEmoji(placement.task.name, '📅'),
         });
 
         result.tasksScheduled++;
+        console.log('[Sync] Successfully scheduled task:', placement.task.uid);
       } catch (error) {
+        console.error('[Sync] Failed to schedule task:', placement.task.uid, error);
         result.errors.push(`Failed to schedule task ${placement.task.uid}: ${error}`);
       }
     }
 
+    console.log('[Sync] Sync cycle complete', result);
     result.success = true;
     return result;
   } catch (error) {
+    console.error('[Sync] Sync cycle failed:', error);
     result.errors.push(`Sync cycle failed: ${error}`);
     return result;
   } finally {
+    console.log('[Sync] Releasing sync lock');
     await releaseSyncLock();
   }
 }

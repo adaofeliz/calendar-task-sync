@@ -8,23 +8,35 @@ const SCHEDULABLE_STATUSES: TaskStatus[] = [
 
 export function getSchedulableTasks(tasks: TududiApiTask[]): TududiApiTask[] {
   return tasks.filter(
-    (task) =>
-      task.due_date !== undefined &&
-      task.due_date !== null &&
-      SCHEDULABLE_STATUSES.includes(task.status)
+    (task) => {
+      const hasDateStr = task.due_date !== undefined && task.due_date !== null ? 'yes' : 'no';
+      const statusMatch = SCHEDULABLE_STATUSES.includes(task.status);
+      const eligible = hasDateStr === 'yes' && statusMatch;
+      
+      console.log('[Filters] Task eligibility:', {
+        uid: task.uid,
+        name: task.name,
+        has_due_date: hasDateStr,
+        status: task.status,
+        status_match: statusMatch,
+        eligible,
+      });
+      
+      return eligible;
+    }
   );
 }
 
 export function extractTaskType(
   tags: TududiApiTag[]
 ): 'focus' | 'noise' | 'unknown' {
-  const typeTags = tags.filter((tag) => tag.name.startsWith('Type: '));
+  const typeTags = tags.filter((tag) => tag.name.toLowerCase().trim().startsWith('type: '));
 
-  if (typeTags.some((tag) => tag.name === 'Type: Focus')) {
+  if (typeTags.some((tag) => tag.name.toLowerCase().trim() === 'type: focus')) {
     return 'focus';
   }
 
-  if (typeTags.some((tag) => tag.name === 'Type: Noise')) {
+  if (typeTags.some((tag) => tag.name.toLowerCase().trim() === 'type: noise')) {
     return 'noise';
   }
 
@@ -34,13 +46,13 @@ export function extractTaskType(
 export function extractTaskSource(
   tags: TududiApiTag[]
 ): 'email' | 'calendar' | 'unknown' {
-  const sourceTags = tags.filter((tag) => tag.name.startsWith('Source: '));
+  const sourceTags = tags.filter((tag) => tag.name.toLowerCase().trim().startsWith('source: '));
 
-  if (sourceTags.some((tag) => tag.name === 'Source: Email')) {
+  if (sourceTags.some((tag) => tag.name.toLowerCase().trim() === 'source: email')) {
     return 'email';
   }
 
-  if (sourceTags.some((tag) => tag.name === 'Source: Calendar')) {
+  if (sourceTags.some((tag) => tag.name.toLowerCase().trim() === 'source: calendar')) {
     return 'calendar';
   }
 
