@@ -199,6 +199,7 @@ export async function runSyncCycle(): Promise<SyncResult> {
     console.log('[Sync] Task placements:', placements.length);
 
     console.log('[Sync] Creating calendar events and updating Tududi');
+    const timezone = String(config.timezone ?? 'Europe/Lisbon').replace(/^"/,'').replace(/"$/,'');
     for (const placement of placements) {
       try {
         console.log('[Sync] Creating event for task:', placement.task.uid);
@@ -206,14 +207,14 @@ export async function runSyncCycle(): Promise<SyncResult> {
         const taskEvent = await createEvent(placement.calendarId, {
           summary: applyEmoji(placement.task.name, '📅'),
           description: placement.task.note || '',
-          start: { dateTime: placement.eventStart.toISOString() },
-          end: { dateTime: placement.eventEnd.toISOString() },
+          start: { dateTime: placement.eventStart.toISOString(), timeZone: timezone },
+          end: { dateTime: placement.eventEnd.toISOString(), timeZone: timezone },
         });
 
         const breakEvent = await createEvent(placement.calendarId, {
           summary: 'Break',
-          start: { dateTime: placement.breakStart.toISOString() },
-          end: { dateTime: placement.breakEnd.toISOString() },
+          start: { dateTime: placement.breakStart.toISOString(), timeZone: timezone },
+          end: { dateTime: placement.breakEnd.toISOString(), timeZone: timezone },
           colorId: '8',
           transparency: 'transparent',
         });

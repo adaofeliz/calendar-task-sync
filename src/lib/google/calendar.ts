@@ -189,6 +189,7 @@ export async function createEvent(
   event: calendar_v3.Schema$Event
 ): Promise<calendar_v3.Schema$Event> {
   const calendar = await getCalendarClient();
+  console.log(`[GCal] Creating event in calendar="${calendarId}" summary="${event.summary}" start=${event.start?.dateTime} end=${event.end?.dateTime} tz=${event.start?.timeZone}`);
 
   const response = await withRetry(() =>
     calendar.events.insert({
@@ -197,6 +198,7 @@ export async function createEvent(
     })
   );
 
+  console.log(`[GCal] Created: id=${response.data.id} link=${response.data.htmlLink} status=${response.data.status}`);
   return response.data;
 }
 
@@ -218,6 +220,7 @@ export async function updateEvent(
     })
   );
 
+  console.log(`[GCal] Created: id=${response.data.id} link=${response.data.htmlLink} status=${response.data.status}`);
   return response.data;
 }
 
