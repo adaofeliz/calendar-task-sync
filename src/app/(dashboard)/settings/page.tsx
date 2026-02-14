@@ -3,6 +3,8 @@ import { getDb } from '@/db';
 import { calendarMappings, busyCalendars, oauthTokens } from '@/db/schema';
 import { SettingsForm } from './settings-form';
 
+export const dynamic = 'force-dynamic';
+
 export default async function SettingsPage() {
   const db = await getDb();
   
